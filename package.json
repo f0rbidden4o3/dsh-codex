@@ -1,18 +1,18 @@
 {
   "name": "dsh-codex",
   "description": "ChatGPT OAuth, Codex models, search, read_image URL support, and gpt-image-2 generation for DeepSeek Harness",
-  "version": "0.2.6",
+  "version": "0.2.7-f0rbidden4o3.0",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Yan-Zero/dsh-codex.git"
+    "url": "git+https://github.com/f0rbidden4o3/dsh-codex.git"
   },
-  "homepage": "https://github.com/Yan-Zero/dsh-codex#readme",
+  "homepage": "https://github.com/f0rbidden4o3/dsh-codex#readme",
   "bugs": {
-    "url": "https://github.com/Yan-Zero/dsh-codex/issues"
+    "url": "https://github.com/f0rbidden4o3/dsh-codex/issues"
   },
   "type": "module",
   "main": "lib/index.js",
