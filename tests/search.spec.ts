@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -49,6 +50,31 @@ function jsonResponse(value: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json' },
   })
+}
+
+async function hostSessionVocabularyFixture(dshHome: string): Promise<Set<string>> {
+  const packageDirectory = join(
+    dshHome,
+    'profiles',
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-session',
+  )
+  await mkdir(packageDirectory, { recursive: true })
+  await writeFile(join(packageDirectory, 'package.json'), JSON.stringify({
+    name: '@deepseek-ai/dsh-session',
+    main: 'index.cjs',
+  }))
+  await writeFile(
+    join(packageDirectory, 'index.cjs'),
+    'module.exports = { KNOWN_SESSION_EVENT_TYPES: new Set() }\n',
+  )
+  const require = createRequire(join(dshHome, 'profiles', 'fixture-reader.cjs'))
+  const vocabulary = (require('@deepseek-ai/dsh-session') as {
+    KNOWN_SESSION_EVENT_TYPES?: unknown
+  }).KNOWN_SESSION_EVENT_TYPES
+  if (!(vocabulary instanceof Set)) throw new Error('invalid host session vocabulary fixture')
+  return vocabulary as Set<string>
 }
 
 async function provider(
@@ -202,6 +228,19 @@ describe('OpenAI Codex standalone search failures', () => {
 })
 
 describe('OpenAI Codex composite plugin', () => {
+  it('registers its required event in the host profile session vocabulary', async () => {
+    root = await mkdtemp(join(tmpdir(), 'dsh-openai-codex-host-vocabulary-'))
+    vi.stubEnv('DSH_HOME', root)
+    const hostVocabulary = await hostSessionVocabularyFixture(root)
+
+    expect(hostVocabulary).not.toBe(KNOWN_SESSION_EVENT_TYPES)
+    expect(hostVocabulary.has(OpenAICodex.OPENAI_CODEX_SEARCH_MODEL_REQUEST_EVENT)).toBe(false)
+
+    OpenAICodex.installOpenAICodexSearchEvent()
+
+    expect(hostVocabulary.has(OpenAICodex.OPENAI_CODEX_SEARCH_MODEL_REQUEST_EVENT)).toBe(true)
+  })
+
   it('registers search through ctx.web and lets the seam cap structured sources', async () => {
     root = await mkdtemp(join(tmpdir(), 'dsh-openai-codex-plugin-'))
     vi.stubEnv('DSH_HOME', root)
