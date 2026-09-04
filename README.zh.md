@@ -12,7 +12,7 @@
 - 经标准 LLM 服务运行的流式响应、工具调用、推理回放、提示词缓存与 dsh 压缩
 - 通过 dsh 现有 `web_search` 工具使用 Codex 独立联网搜索
 - 为 Harness 现有 `read_image` 工具增加可选的 HTTP(S) URL 输入
-- 由 `gpt-image-2` 执行的 `imagegen` 工具，支持工作区／会话参考图和自动工作区输出
+- 由 `gpt-image-2` 执行的 `imagegen` 工具，支持当前工作目录／会话参考图和自动工作目录输出
 - 复用 dsh Web 输入框的粘贴和拖放图片能力
 - 在 Web 输入框提供按会话生效的 Fast Mode 开关与紧凑的每周额度指示器
 
@@ -96,7 +96,7 @@ bundle 会为新建 agent 选择 `openai-codex` / `gpt-5.6-sol`，并选择 Code
 - 在当前 dsh 附件限制内支持 PNG、JPEG、WebP 与 GIF；
 - 只有明确声明支持图片输入的模型才能接收图片。
 
-任何支持视觉输入的当前对话模型都可以使用 `imagegen`。当前模型只需编写普通提示词，并在 `referenced_image_paths` 与 `num_last_images_to_include` 中选择一种参考图来源；插件从 `ctx.fs` 或附件存储读取字节，再发送给 `gpt-image-2`。模型不会输出 base64。每个结果都会直接显示在对话中、保存为持久附件，并写入当前工作区。`output_path` 用来指定位置；省略时会创建唯一的 `generated-<时间戳>-<id>.png` 文件。本地保存能力包含在本插件中；当工作区由 `dsh-remote-ssh` 管理时，远程插件负责 AHP 写入路径。
+任何支持视觉输入的当前对话模型都可以使用 `imagegen`。当前模型只需编写普通提示词，并在 `referenced_image_paths` 与 `num_last_images_to_include` 中选择一种参考图来源；插件从 `ctx.fs` 或附件存储读取字节，再发送给 `gpt-image-2`。模型不会输出 base64。在调用提供方或工作区文件系统之前，插件会准备调用 agent 的可选实时有效工作目录；目录不可用时调用会直接失败，未安装该服务时则继续使用 session header 中的工作目录。相对参考路径与输出路径（包括默认生成的文件名）统一使用这一个已准备目录，绝对路径仍以绝对路径交给 `ctx.fs`。每个结果都会直接显示在对话中、保存为持久附件，并通过当前本地或 Remote SSH 文件系统写出。`output_path` 用来指定位置；省略时会在当前工作目录创建唯一的 `generated-<时间戳>-<id>.png` 文件。本地保存能力包含在本插件中；当当前工作目录由 `dsh-remote-ssh` 管理时，远程插件负责 AHP 写入路径。
 
 设置页提供独立的 **增强 read_image** 与 **允许其他模型使用生图** 开关，默认均为开启。关闭第一项会撤销插件的 agent-scope 覆盖，恢复 Harness 原本只接受本地路径的 `read_image` Schema。关闭第二项后，Codex 视觉模型仍可使用 `imagegen`，其他模型提供方的调用会在执行入口被拒绝。
 

@@ -16,6 +16,7 @@ import type { OpenAICodexCredentialStore } from './store.ts'
 import { OPENAI_CODEX_PROVIDER } from './store.ts'
 import { OPENAI_CODEX_BASE_URL } from './search.ts'
 import { writeWorkspaceBytes } from './binary-fs.ts'
+import { prepareEffectiveCwd } from './effective-cwd.ts'
 import { assertImageCapable } from './image-capability.ts'
 import { imageMediaType } from './read-image-enhancement.ts'
 import type { ImageToolPolicy } from './tool-policy.ts'
@@ -245,8 +246,12 @@ async function conversationImages(ctx: Context, exec: ToolExecution, count: numb
   }))
 }
 
-async function workspaceImages(ctx: Context, exec: ToolExecution, paths: readonly string[]): Promise<string[]> {
-  const cwd = exec.agent?.session.header.cwd
+async function workspaceImages(
+  ctx: Context,
+  exec: ToolExecution,
+  paths: readonly string[],
+  cwd: string | undefined,
+): Promise<string[]> {
   const maxBytes = Math.min(ctx.attachments.imageLimits.maxImageBytes, ctx.attachments.imageLimits.maxMessageImageBytes)
   const images: string[] = []
   for (const path of paths) {
@@ -299,12 +304,12 @@ export function imagegenTool(
   const client = new OpenAICodexImageClient(credentials)
   return defineTool({
     name: IMAGEGEN_TOOL_NAME,
-    description: 'Generate or edit an image with gpt-image-2. Omit both reference fields for a new image. Use referenced_image_paths for workspace files, or num_last_images_to_include for attached, viewed, or previously generated conversation images. Never provide both. Multiple images keep chronological/path-array order; identify them as Image 1, Image 2, and so on in the prompt. The generated PNG is always saved in the active local or Remote SSH workspace; output_path chooses its location, otherwise a unique generated-<timestamp>-<id>.png name is used.',
+    description: 'Generate or edit an image with gpt-image-2. Omit both reference fields for a new image. Use referenced_image_paths for files in the current working directory, or num_last_images_to_include for attached, viewed, or previously generated conversation images. Never provide both. Multiple images keep chronological/path-array order; identify them as Image 1, Image 2, and so on in the prompt. The generated PNG is always saved through the active local or Remote SSH filesystem in the current working directory; output_path chooses its location, otherwise a unique generated-<timestamp>-<id>.png name is used.',
     parameters: {
       prompt: { type: 'string', required: true, description: 'Complete generation or edit instruction. For multiple references, name each input by its Image N order.' },
-      referenced_image_paths: { type: 'array', items: { type: 'string' }, description: 'Up to five local or active-workspace image paths, in Image 1..N order.' },
+      referenced_image_paths: { type: 'array', items: { type: 'string' }, description: 'Up to five image paths relative to the current working directory, or absolute paths, in Image 1..N order.' },
       num_last_images_to_include: { type: 'integer', description: 'Use the most recent 1–5 conversation images, preserving chronological order.' },
-      output_path: { type: 'string', description: 'Optional active-workspace path for the generated PNG. Omit it to save under a unique generated-<timestamp>-<id>.png name. Existing files remain subject to filesystem write-intent policy.' },
+      output_path: { type: 'string', description: 'Optional path relative to the current working directory, or an absolute path, for the generated PNG. Omit it to save under a unique generated-<timestamp>-<id>.png name in the current working directory. Existing files remain subject to filesystem write-intent policy.' },
     },
     output: {
       schema: {
@@ -342,9 +347,10 @@ export function imagegenTool(
     async execute(rawArgs, exec) {
       const args = parseArgs(rawArgs)
       policy.assertAllowed(exec, 'imagegen')
+      const cwd = await prepareEffectiveCwd(ctx, exec)
       await assertImageCapable(ctx, exec, 'generate an image')
       const images = args.referenced_image_paths !== undefined
-        ? await workspaceImages(ctx, exec, args.referenced_image_paths)
+        ? await workspaceImages(ctx, exec, args.referenced_image_paths, cwd)
         : args.num_last_images_to_include !== undefined
           ? await conversationImages(ctx, exec, args.num_last_images_to_include)
           : []
@@ -365,7 +371,6 @@ export function imagegenTool(
       }
       const outputPath = args.output_path ?? defaultOutputPath()
       try {
-        const cwd = exec.agent?.session.header.cwd
         const target = await ctx.fs.resolve(outputPath, { ...cwd === undefined ? {} : { cwd }, signal: exec.signal })
         const intent = await ctx.waterfall('fs/write-intent', target, exec, () => undefined)
         const outcome = await writeWorkspaceBytes(ctx, exec, target, data, intent)
