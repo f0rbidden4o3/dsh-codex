@@ -43,13 +43,17 @@ From a Harness source checkout:
 pnpm dsh plugin --profile web add dsh-codex
 ```
 
-If the user explicitly supplied a local checkout, first require `package.json`, `cordis.patch.yml`, `lib/index.js`, `lib/client.js`, and `lib/bin.js`, and require `package.json.name` to equal `dsh-codex`. Then install its normalized absolute path, using forward slashes on Windows:
+If the user explicitly supplied a local checkout, require `package.json.name` to equal `dsh-codex`, install its development dependencies, and pack a versioned artifact. `prepack` runs the full check and produces the required `lib` entries:
 
 ```sh
-dsh plugin --profile web add link:E:/absolute/path/to/dsh-codex
+cd E:/absolute/path/to/dsh-codex
+pnpm install
+pnpm peers check
+pnpm pack --pack-destination E:/absolute/path/to/artifacts
+dsh plugin --profile web add file:E:/absolute/path/to/artifacts/dsh-codex-<version>.tgz
 ```
 
-Do not run a build when committed `lib/` artifacts are present. The install command is idempotent and must leave `dsh-codex` in the profile dependency map and `dsh.profile.bundles` exactly once.
+Do not install a local checkout with `link:`: externalized Host peers must resolve from the profile installation fallback rather than the checkout. The install command is idempotent and must leave `dsh-codex` in the profile dependency map and `dsh.profile.bundles` exactly once.
 
 ### 3. Configure search without replacing user settings
 
@@ -120,7 +124,7 @@ Do not call the login endpoint as a health check because it starts OAuth. The We
 Report only:
 
 - installed profile;
-- installed `dsh-codex` version or local checkout path;
+- installed `dsh-codex` version or local artifact path;
 - selected search mode;
 - signed-in or signed-out state;
 - whether the Web client entry was detected.
@@ -146,7 +150,7 @@ Do not report OAuth URLs, authorization codes, token timestamps, account ids, or
 dsh plugin --profile web update dsh-codex
 ```
 
-Restart dsh and repeat composition, login-status, and Web verification. A local `link:` installation follows its checkout and is reconciled by repeating the local add command instead.
+Restart dsh and repeat composition, login-status, and Web verification. For a local artifact, bump its package version, repeat `pnpm pack`, and add the resulting tarball again.
 
 ## Removal
 

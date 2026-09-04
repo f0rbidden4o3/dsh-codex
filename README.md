@@ -12,7 +12,7 @@ Use a ChatGPT subscription in [DeepSeek Harness](https://github.com/deepseek-ai/
 - streaming, tool calls, reasoning replay, prompt caching, and dsh compaction through the normal LLM service
 - Codex standalone web search through dsh's existing `web_search` tool
 - optional HTTP(S) URL input added to Harness's existing `read_image` tool
-- an `imagegen` tool backed by `gpt-image-2`, with workspace or conversation reference images and automatic workspace output
+- an `imagegen` tool backed by `gpt-image-2`, with working-directory or conversation reference images and automatic working-directory output
 - browser image input through dsh's existing paste and drop controls
 - a per-conversation Fast Mode switch and compact weekly quota indicator in the Web composer
 
@@ -27,7 +27,7 @@ dsh plugin --profile web add dsh-codex
 dsh web
 ```
 
-From a DeepSeek Harness source checkout, use `pnpm dsh plugin --profile web add dsh-codex`. A local plugin checkout can still be installed with `link:/absolute/path/to/dsh-codex` for development.
+From a DeepSeek Harness source checkout, use `pnpm dsh plugin --profile web add dsh-codex`. For local development, run `pnpm pack` in the plugin checkout and install the resulting versioned tarball with `file:/absolute/path/to/dsh-codex-<version>.tgz`; do not link the checkout into a profile.
 
 Open **Settings → OpenAI Codex → Sign in with ChatGPT**. The plugin opens OpenAI's authorization page and completes the localhost callback. The account page shows live Codex quota bars and exact remaining percentages; exact credit balances or workspace limits appear only when the account API supplies them.
 
@@ -96,7 +96,7 @@ Image support uses dsh's durable attachment path:
 - PNG, JPEG, WebP, and GIF are accepted within the active dsh attachment limits;
 - only a model that explicitly advertises image input may receive an image.
 
-`imagegen` is available to any vision-capable conversation model. The current model writes an ordinary prompt and may select either `referenced_image_paths` or `num_last_images_to_include`; the plugin reads the bytes from `ctx.fs` or the attachment store and sends them to `gpt-image-2`. The model never emits base64. Every result is shown inline, saved as a durable attachment, and written to the active workspace. `output_path` chooses the destination; omitting it creates a unique `generated-<timestamp>-<id>.png` file. Local saving is included in this plugin, while `dsh-remote-ssh` supplies the remote AHP write path when that plugin owns the workspace.
+`imagegen` is available to any vision-capable conversation model. The current model writes an ordinary prompt and may select either `referenced_image_paths` or `num_last_images_to_include`; the plugin reads the bytes from `ctx.fs` or the attachment store and sends them to `gpt-image-2`. The model never emits base64. Before provider or workspace-filesystem work, the plugin prepares the calling agent's optional live effective working directory; an unavailable directory fails the call, while installations without that service retain the session-header fallback. Relative reference and output paths, including the generated default filename, use that one prepared directory, while absolute paths remain absolute through `ctx.fs`. Every result is shown inline, saved as a durable attachment, and written through the active local or Remote SSH filesystem. `output_path` chooses the destination; omitting it creates a unique `generated-<timestamp>-<id>.png` file in the current working directory. Local saving is included in this plugin, while `dsh-remote-ssh` supplies the remote AHP write path when that plugin owns the current working directory.
 
 The Settings page has separate **Enhance read_image** and **Image generation for other models** toggles. Both default on. Turning off the first removes the plugin's agent-scoped override and restores Harness's original local-only `read_image` schema. Turning off the second keeps `imagegen` available to Codex vision models and rejects calls from other model providers at execution time.
 

@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local'
@@ -21,6 +21,15 @@ let workspace: string
 let dshHome: string
 let context: Context | undefined
 let callCounter = 0
+
+type EffectiveWorkingDirectoryValue =
+  | { kind: 'available'; cwd: string }
+  | { kind: 'unavailable'; reason: string }
+
+interface EffectiveWorkingDirectoryService {
+  prepare(agent: object, signal: AbortSignal): Promise<unknown>
+  resolve(agent: object): EffectiveWorkingDirectoryValue | undefined
+}
 
 function accessToken(accountId: string): string {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
@@ -44,6 +53,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
   await context?.fiber.dispose()
@@ -55,9 +65,13 @@ afterEach(async () => {
 async function setup(
   config: OpenAICodex.Config = {},
   sandboxMode?: 'read-only' | 'workspace-write' | 'danger-full-access',
+  effectiveWorkingDirectory?: EffectiveWorkingDirectoryService,
 ): Promise<Context> {
   const ctx = new Context()
   context = ctx
+  if (effectiveWorkingDirectory !== undefined) {
+    ctx.provide('effectiveWorkingDirectory', effectiveWorkingDirectory)
+  }
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime, { mode: 'native' })
   if (sandboxMode === undefined) {
@@ -77,13 +91,14 @@ function agent(
   messages: readonly Message[] = [],
   model = 'gpt-5.6-sol',
   provider = OpenAICodex.OPENAI_CODEX_PROVIDER,
+  cwd = workspace,
 ): object {
   return {
     options: {},
     session: {
       id: 'imagegen-session',
       events: [],
-      header: { cwd: workspace },
+      header: { cwd },
       deriveMessages: () => messages,
       requestHeader: () => ({ config: { provider, model } }),
       append: () => undefined,
@@ -97,13 +112,14 @@ async function generate(
   messages: readonly Message[] = [],
   model = 'gpt-5.6-sol',
   provider = OpenAICodex.OPENAI_CODEX_PROVIDER,
+  cwd = workspace,
 ) {
   return ctx.tools.execute({
     signal,
     callId: CallId(`imagegen-${++callCounter}`),
     name: OpenAICodex.IMAGEGEN_TOOL_NAME,
     arguments: args,
-    agent: agent(messages, model, provider) as never,
+    agent: agent(messages, model, provider, cwd) as never,
   })
 }
 
@@ -178,6 +194,99 @@ describe('imagegen', () => {
     expect(url).toBe(OpenAICodex.OPENAI_CODEX_IMAGE_EDITS_URL)
     const body = JSON.parse(init.body as string) as { images: Array<{ image_url: string }> }
     expect(body.images).toEqual([{ image_url: `data:image/png;base64,${PNG_1X1.toString('base64')}` }])
+  })
+
+  it('uses one prepared working directory for reference reads and relative output', async () => {
+    const effectiveCwd = join(workspace, 'selected-checkout')
+    await mkdir(effectiveCwd)
+    await writeFile(join(effectiveCwd, 'reference.png'), PNG_1X1)
+    const prepare = vi.fn(async (_agent: object, _signal: AbortSignal) => undefined)
+    const resolve = vi.fn((_agent: object) => ({ kind: 'available' as const, cwd: effectiveCwd }))
+    const ctx = await setup({}, undefined, { prepare, resolve })
+    const fetchMock = successfulFetch()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await generate(ctx, {
+      prompt: 'Edit from the selected checkout',
+      referenced_image_paths: ['reference.png'],
+      output_path: 'result.png',
+    })
+
+    expect(result.isError).toBe(false)
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(resolve).toHaveBeenCalledTimes(1)
+    expect(resolve.mock.calls[0]?.[0]).toBe(prepare.mock.calls[0]?.[0])
+    expect(await readFile(join(effectiveCwd, 'result.png'))).toEqual(PNG_1X1)
+    await expect(readFile(join(workspace, 'result.png'))).rejects.toMatchObject({ code: 'ENOENT' })
+    const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe(OpenAICodex.OPENAI_CODEX_IMAGE_EDITS_URL)
+  })
+
+  it('places default output in the prepared working directory', async () => {
+    const effectiveCwd = join(workspace, 'default-output-checkout')
+    await mkdir(effectiveCwd)
+    const service: EffectiveWorkingDirectoryService = {
+      prepare: vi.fn(async () => undefined),
+      resolve: vi.fn(() => ({ kind: 'available' as const, cwd: effectiveCwd })),
+    }
+    const ctx = await setup({}, undefined, service)
+    vi.stubGlobal('fetch', successfulFetch())
+
+    const result = await generate(ctx, { prompt: 'Generate in the selected checkout' })
+
+    expect(result.isError).toBe(false)
+    const text = result.content.find(block => block.type === 'text')?.text ?? ''
+    const match = text.match(/<output_path operation="create">([^<]+)<\/output_path>/u)
+    expect(dirname(match?.[1] ?? '')).toBe(effectiveCwd)
+    expect(basename(match?.[1] ?? '')).toMatch(/^generated-/u)
+    expect(await readFile(match?.[1] ?? 'missing')).toEqual(PNG_1X1)
+  })
+
+  it('fails before provider or filesystem work when the prepared root is unavailable', async () => {
+    const service: EffectiveWorkingDirectoryService = {
+      prepare: vi.fn(async () => undefined),
+      resolve: vi.fn(() => ({ kind: 'unavailable' as const, reason: 'selected checkout was removed' })),
+    }
+    const ctx = await setup({}, undefined, service)
+    const resolvePath = vi.spyOn(ctx.fs, 'resolve')
+    const stat = vi.spyOn(ctx.fs, 'stat')
+    const readBytes = vi.spyOn(ctx.fs, 'readBytes')
+    const provider = vi.spyOn(OpenAICodex.OpenAICodexImageClient.prototype, 'generate')
+    const fetchMock = successfulFetch()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await generate(ctx, {
+      prompt: 'Must not run',
+      referenced_image_paths: ['reference.png'],
+      output_path: 'result.png',
+    })
+
+    expect(result.isError).toBe(true)
+    expect(result.content.find(block => block.type === 'text')?.text)
+      .toContain('effective working directory is unavailable: selected checkout was removed')
+    expect(provider).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(resolvePath).not.toHaveBeenCalled()
+    expect(stat).not.toHaveBeenCalled()
+    expect(readBytes).not.toHaveBeenCalled()
+  })
+
+  it('uses the session-header cwd when the optional service is absent', async () => {
+    const headerCwd = join(workspace, 'header-checkout')
+    await mkdir(headerCwd)
+    await writeFile(join(headerCwd, 'reference.png'), PNG_1X1)
+    const ctx = await setup()
+    vi.stubGlobal('fetch', successfulFetch())
+
+    const result = await generate(ctx, {
+      prompt: 'Use the immutable session root',
+      referenced_image_paths: ['reference.png'],
+      output_path: 'header-result.png',
+    }, [], 'gpt-5.6-sol', OpenAICodex.OPENAI_CODEX_PROVIDER, headerCwd)
+
+    expect(result.isError).toBe(false)
+    expect(await readFile(join(headerCwd, 'header-result.png'))).toEqual(PNG_1X1)
+    await expect(readFile(join(workspace, 'header-result.png'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('can use recent conversation image attachments without model-supplied bytes', async () => {

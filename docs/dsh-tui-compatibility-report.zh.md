@@ -1,24 +1,24 @@
 # dsh-codex 与 dsh-tui 兼容性调查
 
-> 2026-08-16 实施状态：本地工作树已完成 link profile 安装、带子命令补全的 `/codex`、`agentDefaultModel` 启动路由、Ctrl+V／`@image` 持久图片输入、`imagegen` 通用结果卡片和完整工具错误文本。终端内联像素预览仍留给 dsh-tui 的通用 attachment renderer；当前卡片显示生成参数、结果信息与工作区输出路径。
+> 2026-08-16 实施状态：兼容性验证环境已完成基于版本化本地 artifact 的 profile 安装、带子命令补全的 `/codex`、`agentDefaultModel` 启动路由、Ctrl+V／`@image` 持久图片输入、`imagegen` 通用结果卡片和完整工具错误文本。终端内联像素预览仍留给 dsh-tui 的通用 attachment renderer；当前卡片显示生成参数、结果信息与工作区输出路径。
 
 调查日期：2026-08-16
 
 涉及仓库：
 
-- `E:\source\ai\dsh\openai-codex`
-- `E:\source\ai\dsh\dsh-tui`
+- `<dsh-codex-checkout>`
+- `<dsh-tui-checkout>`
 
 ## 结论
 
-最初 `/model` 无法选择 `gpt-5.6-sol` 的直接原因是安装范围：`dsh-codex` 当时只安装在 `web` profile。适配完成后，本地 checkout 已用 link 方式加入 `dsh-tui` profile。
+最初 `/model` 无法选择 `gpt-5.6-sol` 的直接原因是安装范围：`dsh-codex` 当时只安装在 `web` profile。适配完成后，版本化的本地 artifact 已加入 `dsh-tui` profile。
 
-本机 profile 状态如下：
+验证时的 profile 状态如下：
 
 | Profile | Bundles / dependencies | dsh-codex |
 | --- | --- | --- |
-| `web` | 包含 `dsh-codex`，并以 `link:E:/source/ai/dsh/openai-codex` 安装 | 已安装 |
-| `dsh-tui` | 包含 TUI、工作区插件与 `dsh-codex`；后者为 `link:E:/source/ai/dsh/openai-codex` | 已安装 |
+| `web` | 包含 `dsh-codex`，并从 `file:<artifact-directory>/dsh-codex-<version>.tgz` 安装 | 已安装 |
+| `dsh-tui` | 包含 TUI、工作区插件与 `dsh-codex`；后者来自同一版本化 artifact | 已安装 |
 
 `dsh-tui` 的 `/model` 会从当前 profile 的 LLM registry 枚举 provider。缺少 `dsh-codex` 时，registry 中没有 `openai-codex`，模型选择器自然无法提供 `gpt-5.6-sol`。`dsh-codex` 自己的 loader 测试已经确认：bundle 被装载后，`ctx.llm.listModels('openai-codex')` 包含 `gpt-5.6-sol`。
 
@@ -116,10 +116,11 @@ TUI 的 `ToolCallView` 结构子集位于 `dsh-tui/src/channel.ts:79-82`，支�
 
 ### P0：把 dsh-codex 安装到 dsh-tui profile
 
-开发环境应使用现有 checkout 的 link 安装：
+开发环境应从 checkout 打包版本化 artifact，再将该 artifact 安装到目标 profile：
 
 ```powershell
-dsh plugin --profile dsh-tui add link:E:/source/ai/dsh/openai-codex
+pnpm pack --pack-destination <artifact-directory>
+dsh plugin --profile dsh-tui add file:<artifact-directory>/dsh-codex-<version>.tgz
 ```
 
 安装后检查：

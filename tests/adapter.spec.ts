@@ -1,8 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   AttachmentStore,
   ImageAttachmentRef,
 } from "@deepseek-ai/dsh-attachment";
+import { createAssistantMessage } from "@deepseek-ai/dsh-llm";
+import type { GenerateOptions, StreamChunk } from "@deepseek-ai/dsh-llm";
+import { PiAiAdapter } from "@deepseek-ai/dsh-llm-pi-ai";
 import type { OpenAICodexCredentialStore } from "../src/store.ts";
 import { OPENAI_CODEX_PROVIDER } from "../src/store.ts";
 import {
@@ -17,6 +20,37 @@ import {
   openAICodexRequestImagePixelBudget,
 } from "../src/adapter.ts";
 import { Config } from "../src/index.ts";
+import { OpenAICodexResponseRuntime } from "../src/responses.ts";
+
+type PreparedCallLike = {
+  readonly model: Awaited<ReturnType<PiAiAdapter["resolveModel"]>>;
+  readonly stream: (options: GenerateOptions) => AsyncIterable<StreamChunk>;
+};
+
+type PrepareCallLike = (
+  provider: string,
+  model: string,
+  signal?: AbortSignal
+) => Promise<PreparedCallLike>;
+
+const piAiAdapterPrototype = PiAiAdapter.prototype as unknown as {
+  prepareCall?: PrepareCallLike;
+};
+const originalPrepareCall = Object.getOwnPropertyDescriptor(
+  PiAiAdapter.prototype,
+  "prepareCall"
+);
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  if (originalPrepareCall === undefined) delete piAiAdapterPrototype.prepareCall;
+  else
+    Object.defineProperty(
+      PiAiAdapter.prototype,
+      "prepareCall",
+      originalPrepareCall
+    );
+});
 
 describe("OpenAI Codex adapter policy", () => {
   it("validates optional catalog and context-window configuration", () => {
@@ -160,6 +194,94 @@ describe("OpenAI Codex adapter policy", () => {
       initialDelayMs: 1_000,
       maxDelayMs: 30_000,
       jitterRatio: 0.2,
+    });
+  });
+
+  it("preserves compaction purpose around snapshot-bound prepared streams", async () => {
+    const release = vi.fn();
+    const enterCompaction = vi
+      .spyOn(OpenAICodexResponseRuntime.prototype, "enterCompaction")
+      .mockReturnValue(release);
+    let dispatched: GenerateOptions | undefined;
+    const downstream: PreparedCallLike["stream"] = (options) =>
+      (async function* () {
+        dispatched = options;
+      })();
+    const snapshotModel: PreparedCallLike["model"] = {
+      provider: OPENAI_CODEX_PROVIDER,
+      id: "gpt-5.6-sol",
+      name: "GPT-5.6 Sol",
+    };
+    const prepareCall = vi.fn(async () => ({
+      model: snapshotModel,
+      stream: downstream,
+    }));
+    piAiAdapterPrototype.prepareCall = prepareCall;
+    const directStream = vi.spyOn(PiAiAdapter.prototype, "stream");
+    const adapter = createOpenAICodexAdapter(
+      {} as OpenAICodexCredentialStore,
+      () => undefined,
+      () => ({ useWebSocketContextReuse: false, useNativeCompaction: true })
+    );
+    const options: GenerateOptions = {
+      provider: OPENAI_CODEX_PROVIDER,
+      model: "gpt-5.6-sol",
+      purpose: "compaction",
+      sessionId: "session-prepared-compaction" as never,
+      messages: [
+        createAssistantMessage({
+          content: [{ type: "text", text: "legacy response" }],
+          source: {
+            provider: OPENAI_CODEX_PROVIDER,
+            model: "gpt-5.6-sol",
+            replayState: {
+              kind: "pi-ai",
+              version: 1,
+              api: "openai-codex-responses",
+              provider: OPENAI_CODEX_PROVIDER,
+              model: "gpt-5.6-sol",
+              stopReason: "stop",
+              blocks: [],
+            },
+          },
+        }),
+      ],
+    };
+
+    const prepared = await (
+      adapter as PiAiAdapter & { prepareCall: PrepareCallLike }
+    ).prepareCall(OPENAI_CODEX_PROVIDER, "gpt-5.6-sol");
+    expect(prepareCall).toHaveBeenCalledOnce();
+    expect(prepareCall).toHaveBeenCalledWith(
+      OPENAI_CODEX_PROVIDER,
+      "gpt-5.6-sol",
+      undefined
+    );
+    expect(prepared.model).toBe(snapshotModel);
+    for await (const _chunk of prepared.stream(options)) {
+      // The fake snapshot-bound stream intentionally emits no chunks.
+    }
+
+    expect(enterCompaction).toHaveBeenCalledOnce();
+    expect(enterCompaction).toHaveBeenCalledWith(
+      "session-prepared-compaction"
+    );
+    expect(release).toHaveBeenCalledOnce();
+    expect(directStream).not.toHaveBeenCalled();
+    const source = dispatched?.messages[0]?.source;
+    expect(source?.kind).toBe("model");
+    if (source?.kind !== "model")
+      throw new Error("expected a migrated model source");
+    expect(source.replayState).toEqual({
+      response: {
+        kind: "pi-ai",
+        version: 2,
+        api: "openai-codex-responses",
+        provider: OPENAI_CODEX_PROVIDER,
+        model: "gpt-5.6-sol",
+        stopReason: "stop",
+      },
+      blocks: [],
     });
   });
 
