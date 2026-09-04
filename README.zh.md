@@ -27,7 +27,7 @@ dsh plugin --profile web add dsh-codex
 dsh web
 ```
 
-从 DeepSeek Harness 源码 checkout 运行时，使用 `pnpm dsh plugin --profile web add dsh-codex`。开发插件时仍可用 `link:/absolute/path/to/dsh-codex` 安装本地 checkout。
+从 DeepSeek Harness 源码 checkout 运行时，使用 `pnpm dsh plugin --profile web add dsh-codex`。本地开发时，请在插件 checkout 中运行 `pnpm pack`，再通过 `file:/absolute/path/to/dsh-codex-<version>.tgz` 安装生成的版本化 tarball；不要把 checkout 直接链接进 profile。
 
 打开 **设置 → OpenAI Codex → 使用 ChatGPT 登录**。插件会打开 OpenAI 授权页面，并通过 localhost 回调完成登录。账号页面会显示实时 Codex 额度进度条与精确剩余百分比；只有账号接口提供信用余额或工作区限额时，才会一并显示精确数值。
 

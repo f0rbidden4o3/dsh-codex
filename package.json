@@ -25,6 +25,7 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.client.json",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build",
+    "prepack": "pnpm run check",
     "prepublishOnly": "pnpm --config.minimum-release-age=0 run check"
   },
   "exports": {

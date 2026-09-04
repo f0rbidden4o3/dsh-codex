@@ -27,7 +27,7 @@ dsh plugin --profile web add dsh-codex
 dsh web
 ```
 
-From a DeepSeek Harness source checkout, use `pnpm dsh plugin --profile web add dsh-codex`. A local plugin checkout can still be installed with `link:/absolute/path/to/dsh-codex` for development.
+From a DeepSeek Harness source checkout, use `pnpm dsh plugin --profile web add dsh-codex`. For local development, run `pnpm pack` in the plugin checkout and install the resulting versioned tarball with `file:/absolute/path/to/dsh-codex-<version>.tgz`; do not link the checkout into a profile.
 
 Open **Settings → OpenAI Codex → Sign in with ChatGPT**. The plugin opens OpenAI's authorization page and completes the localhost callback. The account page shows live Codex quota bars and exact remaining percentages; exact credit balances or workspace limits appear only when the account API supplies them.
 
